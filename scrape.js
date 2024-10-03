@@ -1,67 +1,61 @@
 import puppeteer from "puppeteer";
-import * as fs from "node:fs";
+import * as fs from "node:fs/promises";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const scrapeYahooFinance = async (ticker) => {
+const scrape = async () => {
   const browser = await puppeteer.launch();
   const page = await browser.newPage();
 
-  const url = `https://finance.yahoo.com/quote/${ticker}`;
+  const allBooks = [];
+  let currentPage = 1;
+  const maxPages = 10;
 
   try {
-    await page.goto(url, { waitUntil: "networkidle2" });
-  } catch (error) {
-    console.error(`Error loading the page for ${ticker}: ${error}`);
-    await browser.close();
-    return null;
-  }
+    while (currentPage <= maxPages) {
+      const url = `https://books.toscrape.com/catalogue/page-${currentPage}.html`;
 
-  const stockData = await page.evaluate(() => {
-    const priceElement = document.querySelector(
-      "fin-streamer[data-field='regularMarketPrice']"
-    );
-    const changeElement = document.querySelector(
-      "fin-streamer[data-field='regularMarketChangePercent']"
-    );
-    const marketCapElement = document.querySelector(
-      "fin-streamer[data-field='marketCap']"
-    );
-    const peRatioElement = document.querySelector(
-      "fin-streamer[data-field='forwardPE']"
-    );
-    const dividendYieldElement = document.querySelector(
-      "fin-streamer[data-field='dividendYield']"
-    );
+      await page.goto(url);
 
-    return {
-      price: priceElement ? priceElement.innerText.trim() : "N/A",
-      change: changeElement ? changeElement.innerText.trim() : "N/A",
-      marketCap: marketCapElement ? marketCapElement.innerText.trim() : "N/A",
-      peRatio: peRatioElement ? peRatioElement.innerText.trim() : "N/A",
-      dividendYield: dividendYieldElement
-        ? dividendYieldElement.innerText.trim()
-        : "N/A",
-    };
-  });
+      const books = await page.evaluate(() => {
+        const bookElements = document.querySelectorAll(".product_pod");
+        return Array.from(bookElements).map((book) => {
+          const title = book.querySelector("h3 a").getAttribute("title");
+          const price = book.querySelector(".price_color").textContent;
+          const stock = book.querySelector(".instock.availability")
+            ? "In Stock"
+            : "Out of Stock";
+          const rating = book
+            .querySelector(".star-rating")
+            .className.split(" ")[1];
+          const link = book.querySelector("h3 a").getAttribute("href");
 
-  await browser.close();
-  return { ticker, ...stockData };
-};
+          return {
+            title,
+            price,
+            stock,
+            rating,
+            link,
+          };
+        });
+      });
 
-const scrapeMultipleTickers = async (tickers) => {
-  const allStockData = [];
+      allBooks.push(...books);
+      console.log(`Books on page ${currentPage}: `, books);
 
-  for (const ticker of tickers) {
-    const stockData = await scrapeYahooFinance(ticker);
-    if (stockData) {
-      allStockData.push(stockData);
+      // Use the custom delay function
+      await delay(1000); // Wait for 1 second
+
+      currentPage++;
     }
-    await delay(2000);
-  }
 
-  fs.writeFileSync("stock_data.json", JSON.stringify(allStockData, null, 2));
+    await fs.writeFile("books.json", JSON.stringify(allBooks, null, 2));
+    console.log("Data saved to books.json");
+  } catch (error) {
+    console.error("Error during scraping:", error);
+  } finally {
+    await browser.close();
+  }
 };
 
-const tickers = ["AAPL", "GOOGL", "MSFT"];
-scrapeMultipleTickers(tickers);
+scrape();
